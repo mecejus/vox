@@ -3,7 +3,9 @@
 Hold **fn**, speak, let go: the words are pasted wherever your cursor is.
 Speech recognition runs entirely on your Mac with
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Nothing is sent
-anywhere, and no API key is needed.
+anywhere, and no API key is needed. Nothing you say is kept either: audio
+and text exist only in memory, never on disk, and the log records only
+timings and lengths.
 
 It's built to run for weeks without slowing down or falling over. See
 [Built for long uptime](#built-for-long-uptime).
@@ -65,7 +67,7 @@ optional:
 | `threads` | `0` | CPU threads for decoding (0 = performance cores) |
 | `gpu` | `true` | Metal acceleration |
 | `fast_decode` | `false` | shortened audio window for short clips: median about 2× faster, but it sometimes adds invented words and has slow outliers (see TESTING.md) |
-| `max_record_seconds` | `1200` | length of one recording chunk (max 3600). Hold fn longer and it keeps recording into the next chunk, pasted after this one, so nothing is cut off |
+| `max_record_seconds` | `1200` | the most one chunk can hold if you never pause (max 3600); recording carries on into the next chunk, so there is no limit on a dictation |
 | `queue_depth` | `2` | finished dictations that may wait while one is transcribed; a press beyond that is refused |
 | `log_level` | `info` | `debug`, `info`, `warn`, `error` |
 | `log_max_bytes` / `log_keep` | `1048576` / `3` | log rotation |
@@ -90,7 +92,6 @@ about 2 s per short dictation (TESTING.md). Smaller models such as `small` or
 | stop until next login | `launchctl bootout gui/$(id -u)/com.vox` |
 | start again | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vox.plist` |
 | log | `~/Library/Logs/vox/vox.log` (JSON lines, rotated at 1 MB, 3 kept) |
-| transcript history | `~/Library/Application Support/vox/history.txt`: every transcript, written before it is pasted, so a failed or misplaced paste can be recovered (rotated at 2 MB, 1 kept) |
 
 The log records each dictation's length, latency and outcome, never the
 words. Run `vox` in a terminal to see the text as it's heard.
@@ -127,6 +128,8 @@ what vox does about each:
 | A hung audio driver freezing the hotkey | Every CoreAudio call has a timeout and runs off the hotkey path. A hung unit is disarmed at once and released when the call returns |
 | Glitches or pauses on the real-time audio thread | A C callback that only copies into a lock-free ring. No allocation, lock or language runtime on that thread |
 | Background CPU and wakeups while idle | Nothing runs between dictations: no output stream, no polling |
+| Losing a long dictation | Split at pauses into chunks of about 30 s, each pasted as you go, so one failure costs at most one chunk. A failed transcription is retried, the last time on a reloaded model, and a failed paste is retried. A paste nothing reads (no text field focused) stays on the clipboard for Cmd+V. A restart waits for queued audio to finish transcribing |
+| Keeping what you said | Nothing is: audio and text never touch the disk, and the log has only timings and lengths. The dictation is on the clipboard only for the moment of the paste, marked transient and concealed so clipboard managers that honour that skip it |
 | Crash or restart loops on startup errors | A missing model, denied microphone and similar problems are logged and retried. Exiting is a last resort, and launchd restarts the process |
 | Logs filling the disk | Logs rotate at a fixed size. Dictated text is never logged |
 
@@ -164,7 +167,7 @@ CoreAudio IO thread ─▶ C callback ─▶ lock-free ring (4 s)
 Every queue and buffer is fixed-size:
 - The ring drops samples and counts them if the drain falls 4 s behind.
 - The buffer pool refuses new presses when full.
-- A recording is split into chunks of `max_record_seconds`. Each full chunk is transcribed and pasted while you keep talking, so a long dictation is never cut off. It stops at the cap only if every buffer is busy.
+- Long dictations are split into chunks at natural pauses about every 30 s. Each chunk is transcribed and pasted while you keep talking, so letting go only waits for the last few seconds. A chunk with no pause is split at `max_record_seconds`. The recording stops only if every buffer is busy.
 - Log records beyond 2048 pending are dropped and counted.
 
 ## Development

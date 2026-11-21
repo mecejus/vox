@@ -53,11 +53,29 @@ import Testing
         #expect(Date().timeIntervalSince(started) < 1)
     }
 
-    @Test func nothingReadsItSoTheClipboardComesBackAfterTheTimeout() throws {
-        let pb = board(holding: "untouched")
+    /// Nothing took the paste (no text field focused): the dictation stays
+    /// on the clipboard, still marked private, so Cmd+V can recover it.
+    @Test func nothingReadsItSoTheDictationStaysOnTheClipboard() throws {
+        let pb = board(holding: "old")
         let out = PasteOutput(pasteboard: pb, grace: 0.05, maxWait: 0.3, postKeystroke: { true })
-        _ = try out.deliver("lost")
-        #expect(pb.string(forType: .string) == "untouched")
+        _ = try out.deliver("not lost")
+        #expect(pb.string(forType: .string) == "not lost ")
+        #expect(pb.types?.contains(.init("org.nspasteboard.ConcealedType")) == true)
+    }
+
+    /// Clipboard managers are told not to record the dictation.
+    @Test func dictationIsMarkedTransientAndConcealed() throws {
+        let pb = board(holding: "old")
+        var types: [NSPasteboard.PasteboardType] = []
+        let out = PasteOutput(pasteboard: pb, grace: 0.05, maxWait: 1, postKeystroke: {
+            types = pb.types ?? []
+            _ = pb.string(forType: .string)
+            return true
+        })
+        _ = try out.deliver("secret")
+        #expect(types.contains(.init("org.nspasteboard.TransientType")))
+        #expect(types.contains(.init("org.nspasteboard.ConcealedType")))
+        #expect(pb.string(forType: .string) == "old")
     }
 
     @Test func userCopyDuringPasteIsNotOverwritten() throws {

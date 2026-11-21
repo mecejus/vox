@@ -10,7 +10,7 @@ with an Apple M1 and 8 GB of RAM, running macOS 26.6.2. vox used
 scripts/swift.sh test
 ```
 
-**60 tests in 12 suites, all passing** (about 15 s). The integration tests use
+**67 tests in 12 suites, all passing** (about 18 s). The integration tests use
 `ggml-tiny.bin` and speech generated with macOS `say`, so no microphone is
 needed.
 
@@ -25,7 +25,7 @@ needed.
 | FnTrackerTests | fn edges, other keys ignored, resync releases a key-up lost while the tap was disabled |
 | TextTests | WER, non-speech annotation stripping, decoder-loop detection |
 | BufferTests | fixed-capacity buffer, fixed-size pool, process stats |
-| PasteTests | against a private pasteboard: an app that reads 600 ms late still pastes the dictation (not the old clipboard), the clipboard is restored right after the read, restored after a timeout when nothing reads, a copy made during the paste is kept, a failed keystroke restores and errors |
+| PasteTests | against a private pasteboard: an app that reads 600 ms late still pastes the dictation (not the old clipboard), the clipboard is restored right after the read, a paste nothing reads stays on the clipboard, the dictation is marked transient and concealed, a copy made during the paste is kept, a failed keystroke restores and errors |
 | PipelineTests | the real pipeline with a scriptable fake model (see faults below) |
 | IntegrationTests | the real pipeline with whisper.cpp (see below) |
 
@@ -43,13 +43,13 @@ trim, whisper.cpp and the ordered output. It asserts WER < 0.25 and latency
 |---|---|---|
 | Device loss mid-recording | `deviceLossMidRecordingKeepsWhatWasSaidAndRecovers` (fake model), `deviceLossWithRealModel` | The audio up to the loss is transcribed. The next dictation works normally. No crash. |
 | Corrupt audio chunk (NaN, ±Inf, 1e9) | `corruptChunkIsRepairedBeforeTheModel`, `corruptChunkWithRealModel` | Samples repaired before the model. The model never sees a non-finite value, and the sentence still comes through (WER < 0.4). |
-| Model error | `repeatedModelErrorsTriggerReloadAndRecovery`, `modelErrorsRecoverWithRealModel` | Each failure gets an error cue and a log line. After 2 in a row the model is reloaded, and the next dictation succeeds. |
-| Inference hang | `modelTimeoutIsAFailureNotAHang`, `inferenceDeadlineAbortsAndEngineSurvives` | A real whisper.cpp call is aborted via its abort callback when the deadline passes. The same engine transcribes correctly afterwards. |
+| Model error | `repeatedModelErrorsReloadAndRetryTheSameAudio`, `persistentModelErrorsFailOneDictationOnly`, `modelErrorsRecoverWithRealModel` | Each failure is logged and retried. The second in a row reloads the model and the same audio gets one more try, so the dictation survives. Only if that fails too is it reported failed (error cue), and the next dictation works. |
+| Inference hang | `modelTimeoutIsRetriedNotAHang`, `inferenceDeadlineAbortsAndEngineSurvives` | A real whisper.cpp call is aborted via its abort callback when the deadline passes. The same engine transcribes correctly afterwards. |
 | Missing / corrupt model file | `missingModelIsRetriedWithoutCrashing`, `missingModelFileIsAnErrorNotACrash`, `corruptModelFileIsAnErrorNotACrash` | An error, not a crash. Presses are refused (logged) until the model loads, and loading is retried. |
 | Audio start failure | `failedStartIsReportedAndTheNextPressWorks` | Logged as an error. The next press works. |
-| Output (paste) failure | `outputFailureDoesNotStopLaterDictations` | Logged. Later dictations are unaffected. |
+| Output (paste) failure | `failedPasteIsRetried`, `outputFailureDoesNotStopLaterDictations`, `nothingReadsItSoTheDictationStaysOnTheClipboard` | A failed paste is retried once. If both fail, later dictations are unaffected. A paste nothing reads stays on the clipboard. |
 | Backlog | `backlogRefusesNewPressInsteadOfGrowing` | With every buffer busy, a press is refused (logged). Capacity returns once the backlog drains. |
-| Over-long recording | `longRecordingRollsOverIntoChunks`, `recordingIsCappedWhenNoBufferIsFree` | Rolls into the next buffer at `max_record_seconds`, so every chunk is transcribed and pasted in order with nothing dropped. It ends at the cap only if no buffer is free. |
+| Long dictation | `longDictationIsSplitAtPauses`, `pauseDetectorFindsSilenceNotSpeech`, `longDictationInChunksKeepsEveryWord` (real model), `longRecordingRollsOverIntoChunks`, `recordingIsCappedWhenNoBufferIsFree` | Split at pauses after `chunkSeconds`; every chunk is delivered in order, and with the real model the joined text matches the whole script. A chunk with no pause rolls over when its buffer is full; the recording ends only if no buffer is free. |
 
 ## Latency: end of speech → text output
 

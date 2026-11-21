@@ -18,10 +18,17 @@ import Foundation
 ///     when none is free is refused (an error cue, logged): the newest
 ///     dictation is the one dropped, before the user speaks it, and nothing
 ///     grows without bound.
-///   - A recording that fills its buffer (`maxRecordSeconds`) carries on
-///     into the next free buffer while the key is still held: the full one
-///     is transcribed and pasted as a chunk, and nothing said is dropped.
-///     Only when no buffer is free is the recording ended there.
+///   - A long recording is split into chunks while the key is held: after
+///     `chunkSeconds`, at the next pause, it carries on in the next free
+///     buffer and the finished chunk is transcribed and pasted while the
+///     user keeps talking. A failure then costs one chunk, not the whole
+///     dictation, and releasing the key only waits for the last chunk. A
+///     chunk that fills its buffer (`maxRecordSeconds`) without a pause is
+///     split there; only when no buffer is free is the recording ended.
+///   - A failed transcription is retried, the last time on a reloaded
+///     model; a failed paste is retried once.
+///   - Dictated audio and text live only in memory and are never written
+///     anywhere but the pasteboard, for the paste itself.
 ///   - The ring between the audio thread and the drain holds seconds of
 ///     audio; if the drain ever falls that far behind, samples are dropped
 ///     on the audio thread and counted in the log.
@@ -29,6 +36,16 @@ import Foundation
 public final class Pipeline: @unchecked Sendable {
     public struct Settings {
         public var maxRecordSeconds: Int = 1200
+        /// Once a chunk is this long, it is ended at the next pause.
+        public var chunkSeconds: Double = 30
+        /// Quiet needed to count as a pause; half that once a chunk is
+        /// twice `chunkSeconds`.
+        public var pauseSeconds: Double = 0.35
+        /// How much of the pause is repeated at the start of the next chunk,
+        /// so the model never starts mid-sound.
+        public var overlapSeconds: Double = 0.2
+        /// Delay before the one retry of a failed paste.
+        public var pasteRetryDelay: TimeInterval = 0.4
         public var queueDepth: Int = 2
         /// Shorter recordings (or recordings with less speech than this) are
         /// ignored as stray taps.
@@ -72,9 +89,6 @@ public final class Pipeline: @unchecked Sendable {
 
     /// Called on an arbitrary thread after each dictation completes.
     public var onReport: ((Report) -> Void)?
-    /// Called on the worker with every transcript, before it is pasted, so
-    /// the text survives a failed or misdirected paste.
-    public var onTranscript: ((String) -> Void)?
     /// Called when the audio source cannot recover in-process.
     public var onUnrecoverable: ((String) -> Void)?
 
@@ -89,6 +103,7 @@ public final class Pipeline: @unchecked Sendable {
         /// Resampled samples that arrived after the buffer filled; they open
         /// the next chunk when the recording rolls over.
         var spill: [Float] = []
+        var pause = Speech.PauseDetector()
         init(id: Int, buffer: SampleBuffer, resampler: Resampler) {
             self.id = id
             self.buffer = buffer
@@ -114,6 +129,7 @@ public final class Pipeline: @unchecked Sendable {
     private var stopping = false
     private var worker: Thread?
     private var modelReady = false        // guarded by jobsLock
+    private var inFlightSamples = 0       // guarded by jobsLock
     private var consecutiveFailures = 0   // worker only
     private let workerDone = DispatchSemaphore(value: 0)
 
@@ -156,20 +172,30 @@ public final class Pipeline: @unchecked Sendable {
         return isModelReady
     }
 
-    /// Ends any recording, finishes queued dictations (up to `timeout`),
-    /// stops the worker and frees the model.
+    /// Ends any recording, finishes queued dictations, stops the worker and
+    /// frees the model. Waits at least `timeout`, and longer while queued
+    /// audio remains (about 1 s per 2 s of audio), so a restart does not
+    /// throw away a long dictation that is still being transcribed.
     public func shutdown(timeout: TimeInterval = 10) {
         state.sync {
             if let s = session { finish(s, released: .now(), reason: "shutdown") }
         }
         jobsLock.lock()
+        let queued = jobs.reduce(0) { $0 + $1.buffer.count } + inFlightSamples
         stopping = true
         jobsLock.broadcast()
         jobsLock.unlock()
-        if worker != nil, workerDone.wait(timeout: .now() + timeout) == .timedOut {
-            log.warn("shutdown_worker_timeout")
+        let wait = max(timeout, Double(queued) / Double(Speech.rate) / 2 + 10)
+        if worker != nil, workerDone.wait(timeout: .now() + wait) == .timedOut {
+            log.warn("shutdown_worker_timeout", ["waited_s": wait])
         }
         outputQueue.sync {}
+    }
+
+    private var stoppingNow: Bool {
+        jobsLock.lock()
+        defer { jobsLock.unlock() }
+        return stopping
     }
 
     // MARK: - Key events (any thread)
@@ -241,10 +267,21 @@ public final class Pipeline: @unchecked Sendable {
         timer.setEventHandler { [weak self] in
             guard let self, let s = self.session else { return }
             self.drain(s)
-            if s.buffer.isFull, !s.capped, !self.rollOver(s) {
-                s.capped = true
-                log.warn("recording_capped", ["seconds": self.settings.maxRecordSeconds, "reason": "no free buffer"])
-                self.finish(s, released: .now(), reason: "max duration")
+            if s.buffer.isFull {
+                if !s.capped, !self.rollOver(s, overlap: 0, reason: "full") {
+                    s.capped = true
+                    log.warn("recording_capped", ["seconds": self.settings.maxRecordSeconds, "reason": "no free buffer"])
+                    self.finish(s, released: .now(), reason: "max duration")
+                }
+                return
+            }
+            let seconds = Double(s.buffer.count) / Double(Speech.rate)
+            guard seconds >= self.settings.chunkSeconds else { return }
+            let needed = seconds >= self.settings.chunkSeconds * 2 ? self.settings.pauseSeconds / 2 : self.settings.pauseSeconds
+            if s.pause.quietSeconds >= needed {
+                // No free buffer: keep recording into this one and try again
+                // at the next pause.
+                _ = self.rollOver(s, overlap: Int(self.settings.overlapSeconds * Double(Speech.rate)), reason: "pause")
             }
         }
         s.drainTimer = timer
@@ -261,6 +298,7 @@ public final class Pipeline: @unchecked Sendable {
                 s.resampler.process(UnsafeBufferPointer(rebasing: tmp[0..<n])) { out in
                     let kept = s.buffer.append(out)
                     if kept < out.count { s.spill.append(contentsOf: out[kept...]) }
+                    s.pause.feed(out)
                 }
                 if s.buffer.isFull { break }
             }
@@ -272,20 +310,27 @@ public final class Pipeline: @unchecked Sendable {
         }
     }
 
-    /// The buffer is full and the key is still held: hand the full buffer to
-    /// the worker as one chunk and keep recording into a fresh one, without
-    /// stopping the microphone or resetting the resampler. Returns false when
-    /// no buffer is free.
-    private func rollOver(_ s: Session) -> Bool {
+    /// The key is still held: hand the current buffer to the worker as one
+    /// chunk and keep recording into a fresh one, without stopping the
+    /// microphone or resetting the resampler. The last `overlap` samples are
+    /// repeated at the start of the new chunk. Returns false when no buffer
+    /// is free.
+    private func rollOver(_ s: Session, overlap: Int, reason: String) -> Bool {
         guard session === s, let buffer = pool.take() else { return false }
         let next = Session(id: nextID, buffer: buffer, resampler: s.resampler)
         nextID += 1
+        let tail = min(overlap, s.buffer.count)
+        if tail > 0 {
+            _ = buffer.append(UnsafeBufferPointer(rebasing: s.buffer.samples[(s.buffer.count - tail)...]))
+        }
         s.spill.withUnsafeBufferPointer { _ = buffer.append($0) }
         s.spill.removeAll()
+        next.pause = s.pause
+        next.pause.resetRun()
         next.drainTimer = s.drainTimer
         s.drainTimer = nil
         session = next
-        log.info("recording_continued", ["id": s.id, "next": next.id,
+        log.info("recording_continued", ["id": s.id, "next": next.id, "reason": reason,
                                          "seconds": Double(s.buffer.count) / Double(Speech.rate)])
         enqueue(Job(id: s.id, buffer: s.buffer, released: .now()))
         return true
@@ -350,8 +395,12 @@ public final class Pipeline: @unchecked Sendable {
                 return
             }
             let job = jobs.removeFirst()
+            inFlightSamples = job.buffer.count
             jobsLock.unlock()
             process(job)
+            jobsLock.lock()
+            inFlightSamples = 0
+            jobsLock.unlock()
         }
     }
 
@@ -424,24 +473,34 @@ public final class Pipeline: @unchecked Sendable {
         if !isModelReady { loadModel() }
         let timeout = max(20, Double(speech.count) / Double(Speech.rate) * 3 + 10)
         let t0 = DispatchTime.now()
-        let text: String
-        do {
-            text = try transcriber.transcribe(speech, timeout: timeout)
-            consecutiveFailures = 0
-        } catch {
-            consecutiveFailures += 1
-            report.outcome = .failed(String(describing: error))
-            report.inference = Self.seconds(since: t0)
-            log.error("transcription_failed", ["id": job.id, "error": error, "consecutive": consecutiveFailures])
-            chimes.play(.error)
-            if consecutiveFailures >= settings.reloadAfterFailures {
-                log.warn("model_reload", ["after_failures": consecutiveFailures])
-                jobsLock.lock()
-                modelReady = false
-                jobsLock.unlock()
-                loadModel()
+        var text: String?
+        // What was said exists only in this buffer, so a model error is not
+        // the end of it: retry, and the second failure in a row reloads the
+        // model so the last attempt runs on a fresh one.
+        for attempt in 1...3 {
+            do {
+                text = try transcriber.transcribe(speech, timeout: timeout)
                 consecutiveFailures = 0
+                break
+            } catch {
+                consecutiveFailures += 1
+                report.outcome = .failed(String(describing: error))
+                log.error("transcription_failed", ["id": job.id, "error": error, "attempt": attempt,
+                                                   "consecutive": consecutiveFailures])
+                if consecutiveFailures >= settings.reloadAfterFailures {
+                    log.warn("model_reload", ["after_failures": consecutiveFailures])
+                    jobsLock.lock()
+                    modelReady = false
+                    jobsLock.unlock()
+                    loadModel()
+                    consecutiveFailures = 0
+                }
+                if stoppingNow { break }
             }
+        }
+        guard let text else {
+            report.inference = Self.seconds(since: t0)
+            chimes.play(.error)
             finishReport(report)
             return
         }
@@ -451,18 +510,21 @@ public final class Pipeline: @unchecked Sendable {
             finishReport(report)
             return
         }
-        onTranscript?(text)
 
         outputQueue.async {
-            do {
-                let at = try self.output.deliver(text)
-                report.outcome = .delivered(chars: text.count)
-                report.latency = Double(at.uptimeNanoseconds &- job.released.uptimeNanoseconds) / 1e9
-            } catch {
-                report.outcome = .failed(String(describing: error))
-                log.error("output_failed", ["id": job.id, "error": error])
-                self.chimes.play(.error)
+            for attempt in 1...2 {
+                do {
+                    let at = try self.output.deliver(text)
+                    report.outcome = .delivered(chars: text.count)
+                    report.latency = Double(at.uptimeNanoseconds &- job.released.uptimeNanoseconds) / 1e9
+                    break
+                } catch {
+                    report.outcome = .failed(String(describing: error))
+                    log.error("output_failed", ["id": job.id, "error": error, "attempt": attempt])
+                    if attempt == 1 { Thread.sleep(forTimeInterval: self.settings.pasteRetryDelay) }
+                }
             }
+            if case .failed = report.outcome { self.chimes.play(.error) }
             self.finishReport(report)
         }
     }

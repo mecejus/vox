@@ -142,7 +142,7 @@ cat > "$PLIST" <<PLIST
     <key>ThrottleInterval</key>
     <integer>1</integer>
     <key>ExitTimeOut</key>
-    <integer>15</integer>
+    <integer>90</integer>
     <key>ProcessType</key>
     <string>Interactive</string>
     <key>StandardOutPath</key>

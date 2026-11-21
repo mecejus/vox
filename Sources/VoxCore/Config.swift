@@ -118,7 +118,6 @@ public enum Paths {
     public static var accessPromptMarker: URL { configDir.appendingPathComponent("access-prompted") }
     public static var support: URL { home.appendingPathComponent("Library/Application Support/vox") }
     public static var models: URL { support.appendingPathComponent("models") }
-    public static var historyFile: URL { support.appendingPathComponent("history.txt") }
     public static var logDir: URL { home.appendingPathComponent("Library/Logs/vox") }
     public static var logFile: URL { logDir.appendingPathComponent("vox.log") }
 }

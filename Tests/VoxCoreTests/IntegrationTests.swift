@@ -71,6 +71,37 @@ struct IntegrationTests {
         r.shutdown()
     }
 
+    /// A long dictation split into chunks at pauses comes out as accurate
+    /// as one piece: every sentence is there, in order, nothing doubled or
+    /// cut at the joins.
+    @Test func longDictationInChunksKeepsEveryWord() throws {
+        pipelineLogQuiet()
+        let script = [
+            "Please schedule the design review for Thursday afternoon.",
+            "Bring the latest prototype and the customer feedback.",
+            "We will decide on the launch date at the end of the meeting.",
+            "Send the summary to the whole team on Friday morning.",
+        ]
+        let wav = try Fixture.speech(script.joined(separator: " [[slnc 700]] "))
+        var s = Pipeline.Settings()
+        s.chunkSeconds = 4
+        let r = OfflineRunner(transcriber: Fixture.engine(), settings: s, speed: 4)
+        #expect(r.start(timeout: 120))
+        _ = r.run(wav)
+        let deadline = Date().addingTimeInterval(60)
+        var settled = 0
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.5)
+            let n = r.output.texts.count
+            if n >= 2, n == settled { break }
+            settled = n
+        }
+        #expect(r.output.texts.count >= 2, "chunks: \(r.output.texts)")
+        let heard = r.output.texts.joined(separator: " ")
+        #expect(WER.rate(reference: script.joined(separator: " "), hypothesis: heard) < 0.2, "heard: \(heard)")
+        r.shutdown()
+    }
+
     @Test func deviceRateAudioIsResampled() throws {
         pipelineLogQuiet()
         let wav = try Fixture.speech(rate: 48_000)

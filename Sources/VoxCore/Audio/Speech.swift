@@ -71,4 +71,56 @@ public enum Speech {
         let hi = min(s.count, (last + 1) * frame + pad)
         return Analysis(speech: lo..<hi, peak: peak, noiseFloor: floor)
     }
+
+    /// Streaming pause finder for a live recording: tracks the speech level
+    /// and the noise floor over 10 ms frames and reports how long the input
+    /// has been quiet. Long dictations are split at these pauses, so a split
+    /// never lands inside a word.
+    public struct PauseDetector {
+        private var floor: Float = 0.01
+        private var loud: Float = 0
+        private var partial: [Float] = []
+        /// Consecutive quiet frames at the end of what was fed.
+        public private(set) var quietFrames = 0
+
+        public init() {}
+
+        public var quietSeconds: Double { Double(quietFrames * Speech.frame) / Double(Speech.rate) }
+
+        public mutating func feed(_ s: UnsafeBufferPointer<Float>) {
+            var i = 0
+            if !partial.isEmpty {
+                let need = Speech.frame - partial.count
+                let take = min(need, s.count)
+                partial.append(contentsOf: s[0..<take])
+                i = take
+                if partial.count == Speech.frame {
+                    let p = partial
+                    p.withUnsafeBufferPointer { frame($0.baseAddress!) }
+                    partial.removeAll(keepingCapacity: true)
+                }
+            }
+            guard let base = s.baseAddress else { return }
+            while i + Speech.frame <= s.count {
+                frame(base + i)
+                i += Speech.frame
+            }
+            if i < s.count { partial.append(contentsOf: s[i...]) }
+        }
+
+        /// Starts a new chunk: the levels carry over, the quiet run does not.
+        public mutating func resetRun() { quietFrames = 0 }
+
+        private mutating func frame(_ p: UnsafePointer<Float>) {
+            var rms: Float = 0
+            vDSP_rmsqv(p, 1, &rms, vDSP_Length(Speech.frame))
+            // Loudness decays slowly (half-life about 7 s) and jumps up at
+            // once; the floor follows quiet frames at once and creeps up
+            // through sustained noise.
+            loud = max(rms, loud * 0.999)
+            floor = rms < floor ? rms : floor + (rms - floor) * 0.002
+            let threshold = max(0.002, floor * 3, loud * 0.08)
+            quietFrames = rms < threshold ? quietFrames + 1 : 0
+        }
+    }
 }

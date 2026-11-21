@@ -61,6 +61,19 @@ func speechLike(seconds: Double, rate: Double = 16_000) -> WAV {
     return WAV(sampleRate: rate, samples: s)
 }
 
+/// Phrases of `talk` seconds separated by `pause` seconds of silence.
+func phrases(seconds: Double, talk: Double = 1.4, pause: Double = 0.6, rate: Double = 16_000) -> WAV {
+    let n = Int(seconds * rate)
+    var s = [Float](repeating: 0, count: n)
+    for i in 0..<n {
+        let t = Double(i) / rate
+        if t.truncatingRemainder(dividingBy: talk + pause) < talk {
+            s[i] = Float(sin(2 * .pi * 220 * t) * 0.3 + sin(2 * .pi * 660 * t) * 0.1)
+        }
+    }
+    return WAV(sampleRate: rate, samples: s)
+}
+
 func makeRunner(_ fake: FakeTranscriber, _ settings: Pipeline.Settings = Pipeline.Settings(),
                 faults: FileSource.Faults = FileSource.Faults()) -> OfflineRunner {
     let r = OfflineRunner(transcriber: fake, settings: settings, speed: .infinity, faults: faults)
@@ -167,17 +180,47 @@ func pipelineLogQuiet() {
         let r = OfflineRunner(transcriber: fake, settings: s, speed: 10)
         pipelineLogQuiet()
         #expect(r.start(timeout: 5))
-        var transcripts: [String] = []
-        let lock = NSLock()
-        r.pipeline.onTranscript = { t in lock.withLock { transcripts.append(t) } }
         _ = r.run(speechLike(seconds: 3.5))
         let deadline = Date().addingTimeInterval(5)
         while r.output.texts.count < 4, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
         #expect(r.output.texts.count == 4)
-        #expect(lock.withLock { transcripts } == r.output.texts)
         let audio = fake.inputs.dropFirst().map(\.count).reduce(0, +)
         #expect(audio > Int(2.9 * 16_000))
         r.shutdown()
+    }
+
+    /// A long dictation is cut into chunks at pauses once a chunk is past
+    /// `chunkSeconds`; each is delivered, in order, and no cut lands in a
+    /// phrase.
+    @Test func longDictationIsSplitAtPauses() {
+        let fake = FakeTranscriber()
+        var s = Pipeline.Settings()
+        s.chunkSeconds = 3
+        let r = OfflineRunner(transcriber: fake, settings: s, speed: 10)
+        pipelineLogQuiet()
+        #expect(r.start(timeout: 5))
+        _ = r.run(phrases(seconds: 12))
+        let deadline = Date().addingTimeInterval(5)
+        while r.output.texts.count < 3, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        Thread.sleep(forTimeInterval: 0.3)
+        let chunks = r.output.texts.count
+        #expect((3...5).contains(chunks), "chunks: \(chunks)")
+        // Every chunk is at least chunkSeconds long except the last.
+        let lengths = fake.inputs.dropFirst().map { Double($0.count) / 16_000 }
+        #expect(lengths.dropLast().allSatisfy { $0 >= 2.5 }, "lengths: \(lengths)")
+        r.shutdown()
+    }
+
+    @Test func pauseDetectorFindsSilenceNotSpeech() {
+        var d = Speech.PauseDetector()
+        let talk = phrases(seconds: 1.4, talk: 1.4, pause: 0).samples
+        let quiet = [Float](repeating: 0.0005, count: 8_000)
+        talk.withUnsafeBufferPointer { d.feed($0) }
+        #expect(d.quietSeconds < 0.05)
+        quiet.withUnsafeBufferPointer { d.feed($0) }
+        #expect(d.quietSeconds > 0.45)
+        talk.withUnsafeBufferPointer { d.feed(UnsafeBufferPointer(rebasing: $0[0..<1_600])) }
+        #expect(d.quietSeconds < 0.05)
     }
 
     /// With no free buffer to roll into, the recording ends at the cap and
@@ -243,33 +286,48 @@ func pipelineLogQuiet() {
         r.shutdown()
     }
 
-    @Test func repeatedModelErrorsTriggerReloadAndRecovery() {
+    /// Two failures in a row reload the model, and the same audio is tried
+    /// once more on the fresh one: the dictation is not lost.
+    @Test func repeatedModelErrorsReloadAndRetryTheSameAudio() {
         let fake = FakeTranscriber()
         // Warm-up, two failures, the warm-up after the reload, then success.
         fake.script = [.text(""), .fail(.inferenceFailed(-6)), .fail(.inferenceFailed(-6)), .text(""), .text("back")]
         let r = makeRunner(fake)
         #expect(r.start(timeout: 5))
         let a = r.run(speechLike(seconds: 1))
-        let b = r.run(speechLike(seconds: 1))
-        guard case .failed? = a.report?.outcome, case .failed? = b.report?.outcome else {
-            Issue.record("expected two failures, got \(String(describing: a.report?.outcome)), \(String(describing: b.report?.outcome))")
-            r.shutdown()
-            return
-        }
+        #expect(a.text == "back")
         #expect(fake.loads == 2) // reloaded after the second failure
-        let c = r.run(speechLike(seconds: 1))
-        #expect(c.text == "back")
+        #expect(fake.inputs[1].count == fake.inputs[4].count) // same audio
         r.shutdown()
     }
 
-    @Test func modelTimeoutIsAFailureNotAHang() {
+    /// When every attempt fails the dictation is reported failed, and the
+    /// next one works.
+    @Test func persistentModelErrorsFailOneDictationOnly() {
+        let fake = FakeTranscriber()
+        let e = TranscribeError.inferenceFailed(-6)
+        fake.script = [.text(""), .fail(e), .fail(e), .text(""), .fail(e)]
+        let r = makeRunner(fake)
+        #expect(r.start(timeout: 5))
+        let a = r.run(speechLike(seconds: 1))
+        guard case .failed? = a.report?.outcome else {
+            Issue.record("expected failure, got \(String(describing: a.report?.outcome))")
+            r.shutdown()
+            return
+        }
+        #expect(r.chimes.played.last == .error)
+        #expect(r.run(speechLike(seconds: 1)).text != nil)
+        r.shutdown()
+    }
+
+    @Test func modelTimeoutIsRetriedNotAHang() {
         let fake = FakeTranscriber()
         fake.script = [.text(""), .fail(.timedOut(20))]
         let r = makeRunner(fake)
         #expect(r.start(timeout: 5))
         let a = r.run(speechLike(seconds: 1))
-        #expect(a.report?.outcome == .failed("inference exceeded 20 s and was aborted"))
-        #expect(r.run(speechLike(seconds: 1)).text != nil)
+        #expect(a.text != nil)
+        #expect(fake.calls == 3) // warm-up, the timeout, the retry
         r.shutdown()
     }
 
@@ -289,11 +347,24 @@ func pipelineLogQuiet() {
         r.shutdown()
     }
 
-    @Test func outputFailureDoesNotStopLaterDictations() {
+    @Test func failedPasteIsRetried() {
         let fake = FakeTranscriber()
-        let r = makeRunner(fake)
+        var s = Pipeline.Settings()
+        s.pasteRetryDelay = 0.01
+        let r = makeRunner(fake, s)
         #expect(r.start(timeout: 5))
         r.output.failNext = 1
+        #expect(r.run(speechLike(seconds: 1)).text != nil)
+        r.shutdown()
+    }
+
+    @Test func outputFailureDoesNotStopLaterDictations() {
+        let fake = FakeTranscriber()
+        var s = Pipeline.Settings()
+        s.pasteRetryDelay = 0.01
+        let r = makeRunner(fake, s)
+        #expect(r.start(timeout: 5))
+        r.output.failNext = 2
         let a = r.run(speechLike(seconds: 1))
         guard case .failed? = a.report?.outcome else {
             Issue.record("expected failure")

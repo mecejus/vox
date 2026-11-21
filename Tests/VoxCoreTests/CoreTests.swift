@@ -8,20 +8,6 @@ func tempDir() -> URL {
     return u
 }
 
-@Suite struct HistoryTests {
-    @Test func appendsAndRotates() throws {
-        let url = tempDir().appendingPathComponent("h/history.txt")
-        let h = TranscriptHistory(url: url, maxBytes: 64)
-        h.append("first line\nwith a break")
-        let one = try String(contentsOf: url, encoding: .utf8)
-        #expect(one.hasSuffix("\tfirst line with a break\n"))
-        h.append(String(repeating: "x", count: 80))
-        h.append("after rotation")
-        #expect(try String(contentsOf: url, encoding: .utf8).contains("after rotation"))
-        #expect(try String(contentsOf: h.previous, encoding: .utf8).contains("xxxx"))
-    }
-}
-
 @Suite struct ConfigTests {
     @Test func missingKeysTakeDefaults() throws {
         let c = try JSONDecoder().decode(Config.self, from: Data(#"{"language":"lt"}"#.utf8))

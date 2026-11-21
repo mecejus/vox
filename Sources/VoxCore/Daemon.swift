@@ -80,8 +80,6 @@ public final class Daemon {
         let output: TextOutput = isatty(STDOUT_FILENO) != 0 ? EchoOutput(PasteOutput()) : PasteOutput()
         let pipeline = Pipeline(source: source, transcriber: engine, output: output,
                                 chimes: NoChimes(), settings: settings)
-        let history = TranscriptHistory()
-        pipeline.onTranscript = { history.append($0) }
         pipeline.onUnrecoverable = { [weak self] why in
             DispatchQueue.main.async { self?.stop(.failure, reason: why) }
         }
@@ -144,7 +142,7 @@ public final class Daemon {
         exitCode = code
         tap?.stop()
         healthTimer?.cancel()
-        pipeline?.shutdown(timeout: 10)
+        pipeline?.shutdown(timeout: 10)  // extended by the pipeline while dictations are still queued
         log.info("stopped", ProcessStats.current().fields)
         log.flush()
         CFRunLoopStop(CFRunLoopGetMain())

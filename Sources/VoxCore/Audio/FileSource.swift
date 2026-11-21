@@ -2,7 +2,7 @@ import Foundation
 
 /// An AudioSource that plays a WAV file into the ring instead of a
 /// microphone, from its own thread, in device-sized chunks. Used by the
-/// integration tests, `murmur bench` and the soak test, so the whole pipeline
+/// integration tests, `vox bench` and the soak test, so the whole pipeline
 /// (ring, drain, resampler, trimming, model, output) runs without a mic.
 ///
 /// Fault injection for tests: a corrupt (NaN/Inf/huge) chunk, losing the
@@ -66,7 +66,7 @@ public final class FileSource: AudioSource, @unchecked Sendable {
         doneSignal = DispatchSemaphore(value: 0)
         let t = Thread { [weak self] in self?.feed() }
         t.qualityOfService = .userInteractive
-        t.name = "murmur.filesource"
+        t.name = "vox.filesource"
         thread = t
         t.start()
     }

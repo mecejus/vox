@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy the parts of a whisper.cpp release that murmur builds into Vendor/whisper.
+"""Copy the parts of a whisper.cpp release that vox builds into Vendor/whisper.
 
 whisper.cpp's own build is CMake. This machine-independent script replaces it
 with a fixed file list SwiftPM can compile, so the project builds with nothing
@@ -11,7 +11,7 @@ once instead and they are committed with the sources:
   - the embedded Metal shader sources: the preprocessed text of each kernel
     kind in metal/, and an assembly file per kind that .incbin's it between
     the ggml_metallib_<kind>_start/_end symbols ggml-metal-device.m reads. The shaders are compiled by the Metal framework at model load, so
-    no Metal compiler (full Xcode) is needed to build murmur.
+    no Metal compiler (full Xcode) is needed to build vox.
 
 Usage: scripts/vendor_whisper.py /path/to/whisper.cpp-<version> <version>
 """
@@ -132,7 +132,7 @@ PATCHES = [
         """    // auto-detect language if not specified
     if (params.language == nullptr""",
         """    // overwrite audio_ctx before language detection, which encodes with it
-    // (murmur patch, see scripts/vendor_whisper.py)
+    // (vox patch, see scripts/vendor_whisper.py)
     if (params.audio_ctx > whisper_n_audio_ctx(ctx)) {
         WHISPER_LOG_ERROR("%s: audio_ctx is larger than the maximum allowed (%d > %d)\\n", __func__, params.audio_ctx, whisper_n_audio_ctx(ctx));
         return -5;
@@ -167,7 +167,7 @@ PATCHES = [
         """        // encode audio features starting at offset seek
         if (!whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {""",
         """        // encode audio features starting at offset seek
-        // (murmur patch: reuse the language-detection encode of window 0)
+        // (vox patch: reuse the language-detection encode of window 0)
         const bool reuse_encode = lang_detect_encoded && seek == 0;
         lang_detect_encoded = false;
         if (!reuse_encode && !whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {""",
@@ -197,7 +197,7 @@ def main():
     copy(src_root, ["whisper.h"], DEST / "include", "include")
     copy(src_root, GGML_HEADERS, DEST / "include", "ggml/include")
     # The ANE encoder is compiled in upstream unconditionally and only used
-    # when ANEFORGE_ENCODER is set; murmur clears that variable at startup.
+    # when ANEFORGE_ENCODER is set; vox clears that variable at startup.
     copy(src_root, ["whisper.cpp", "whisper-arch.h", "aneforge/whisper-aneforge.h",
                     "aneforge/whisper-aneforge.cpp"], DEST / "src", "src")
     copy(src_root, GGML_SRC, DEST / "ggml", "ggml/src")

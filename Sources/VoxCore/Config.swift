@@ -1,10 +1,10 @@
 import Foundation
 
-/// Settings from ~/.config/murmur/config.json. Every field is optional in the
+/// Settings from ~/.config/vox/config.json. Every field is optional in the
 /// file; anything missing takes the default below.
 public struct Config: Codable, Equatable, Sendable {
     /// Path to a ggml Whisper model. Relative paths resolve against the
-    /// models folder (~/Library/Application Support/murmur/models).
+    /// models folder (~/Library/Application Support/vox/models).
     public var model: String = Config.defaultModelFile
 
     /// ISO-639-1 language hint such as "en", or "auto" to detect it.
@@ -24,17 +24,14 @@ public struct Config: Codable, Equatable, Sendable {
     /// accurate. See WhisperEngine.Options.fastDecode.
     public var fastDecode: Bool = false
 
-    /// A single dictation is capped at this many seconds; holding the key
-    /// longer ends the recording there.
-    public var maxRecordSeconds: Int = 300
+    /// Length of one recording chunk. Holding the key longer carries on into
+    /// the next chunk, which is pasted after this one.
+    public var maxRecordSeconds: Int = 1200
 
     /// Finished recordings that may wait for transcription while another is
     /// being transcribed. A key press when that many are already waiting is
-    /// refused with the error sound rather than queued without bound.
+    /// refused (and logged) rather than queued without bound.
     public var queueDepth: Int = 2
-
-    /// Play the start/stop chimes.
-    public var sounds: Bool = true
 
     /// "debug", "info", "warn" or "error".
     public var logLevel: String = "info"
@@ -44,7 +41,7 @@ public struct Config: Codable, Equatable, Sendable {
     public var logKeep: Int = 3
 
     enum CodingKeys: String, CodingKey {
-        case model, language, threads, gpu, prompt, sounds
+        case model, language, threads, gpu, prompt
         case fastDecode = "fast_decode"
         case maxRecordSeconds = "max_record_seconds"
         case queueDepth = "queue_depth"
@@ -68,7 +65,6 @@ public struct Config: Codable, Equatable, Sendable {
         fastDecode = try c.decodeIfPresent(Bool.self, forKey: .fastDecode) ?? d.fastDecode
         maxRecordSeconds = try c.decodeIfPresent(Int.self, forKey: .maxRecordSeconds) ?? d.maxRecordSeconds
         queueDepth = try c.decodeIfPresent(Int.self, forKey: .queueDepth) ?? d.queueDepth
-        sounds = try c.decodeIfPresent(Bool.self, forKey: .sounds) ?? d.sounds
         logLevel = try c.decodeIfPresent(String.self, forKey: .logLevel) ?? d.logLevel
         logMaxBytes = try c.decodeIfPresent(Int.self, forKey: .logMaxBytes) ?? d.logMaxBytes
         logKeep = try c.decodeIfPresent(Int.self, forKey: .logKeep) ?? d.logKeep
@@ -82,7 +78,7 @@ public struct Config: Codable, Equatable, Sendable {
             let c = min(max(v, lo), hi)
             if c != v { notes.append("\(name) \(v) out of range, using \(c)"); v = c }
         }
-        clamp(&maxRecordSeconds, 1, 600, "max_record_seconds")
+        clamp(&maxRecordSeconds, 1, 3600, "max_record_seconds")
         clamp(&queueDepth, 0, 8, "queue_depth")
         clamp(&threads, 0, 32, "threads")
         clamp(&logMaxBytes, 64 << 10, 64 << 20, "log_max_bytes")
@@ -117,13 +113,14 @@ public struct Config: Codable, Equatable, Sendable {
 
 public enum Paths {
     static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
-    public static var configDir: URL { home.appendingPathComponent(".config/murmur") }
+    public static var configDir: URL { home.appendingPathComponent(".config/vox") }
     public static var configFile: URL { configDir.appendingPathComponent("config.json") }
     public static var accessPromptMarker: URL { configDir.appendingPathComponent("access-prompted") }
-    public static var support: URL { home.appendingPathComponent("Library/Application Support/murmur") }
+    public static var support: URL { home.appendingPathComponent("Library/Application Support/vox") }
     public static var models: URL { support.appendingPathComponent("models") }
-    public static var logDir: URL { home.appendingPathComponent("Library/Logs/murmur") }
-    public static var logFile: URL { logDir.appendingPathComponent("murmur.log") }
+    public static var historyFile: URL { support.appendingPathComponent("history.txt") }
+    public static var logDir: URL { home.appendingPathComponent("Library/Logs/vox") }
+    public static var logFile: URL { logDir.appendingPathComponent("vox.log") }
 }
 
 public enum ConfigStore {

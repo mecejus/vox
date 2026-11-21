@@ -1,4 +1,4 @@
-# murmur
+# vox
 
 Hold **fn**, speak, let go: the words are pasted wherever your cursor is.
 Speech recognition runs entirely on your Mac with
@@ -17,12 +17,12 @@ It's built to run for weeks without slowing down or falling over. See
 ## Install
 
 ```bash
-git clone https://github.com/mecejus/murmur.git ~/Projects/murmur
-cd ~/Projects/murmur
+git clone https://github.com/mecejus/vox.git ~/Projects/vox
+cd ~/Projects/vox
 ./install.sh
 ```
 
-The installer builds murmur, signs it with a certificate it creates on this
+The installer builds vox, signs it with a certificate it creates on this
 Mac, downloads the speech model (once, checksum-verified), and starts it as a
 launchd service that comes back by itself if it ever exits. Run `./install.sh`
 again to update.
@@ -36,8 +36,8 @@ macOS asks for two permissions on first start:
 | **Accessibility** | to see the fn key and to paste (Cmd+V) | System Settings → Privacy & Security → Accessibility |
 | **Microphone** | to hear you | System Settings → Privacy & Security → Microphone |
 
-Click **Open System Settings** and switch murmur on. murmur notices the grant
-within a few seconds and starts on its own. If an older build of murmur is
+Click **Open System Settings** and switch vox on. vox notices the grant
+within a few seconds and starts on its own. If an older build of vox is
 already in the Accessibility list, remove it with the minus (−) button first.
 
 Also set **System Settings → Keyboard → Press 🌐 key to → Do Nothing** so fn
@@ -46,33 +46,32 @@ doesn't open the emoji picker.
 Check where things stand at any time:
 
 ```bash
-murmur check        # permissions, model, paths
-murmur mic-test     # record 4 s from the microphone and transcribe it
+vox check        # permissions, model, paths
+vox mic-test     # record 4 s from the microphone and transcribe it
 ```
 
-(`murmur` is installed to `~/.local/bin`. Add that to your `PATH`, or use the full path.)
+(`vox` is installed to `~/.local/bin`. Add that to your `PATH`, or use the full path.)
 
 ## Configuration
 
-`~/.config/murmur/config.json` is created on first run. Every key is
+`~/.config/vox/config.json` is created on first run. Every key is
 optional:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `model` | `ggml-large-v3-turbo-q5_0.bin` | model file; relative names resolve in `~/Library/Application Support/murmur/models` |
+| `model` | `ggml-large-v3-turbo-q5_0.bin` | model file; relative names resolve in `~/Library/Application Support/vox/models` |
 | `language` | `auto` | `auto`, or an ISO-639-1 code such as `en` or `lt` |
 | `prompt` | `""` | text that primes spelling and vocabulary (names, jargon) |
 | `threads` | `0` | CPU threads for decoding (0 = performance cores) |
 | `gpu` | `true` | Metal acceleration |
 | `fast_decode` | `false` | shortened audio window for short clips: median about 2× faster, but it sometimes adds invented words and has slow outliers (see TESTING.md) |
-| `max_record_seconds` | `300` | longest single dictation |
-| `queue_depth` | `2` | finished dictations that may wait while one is transcribed; a press beyond that is refused with the error sound |
-| `sounds` | `true` | start / stop / error chimes |
+| `max_record_seconds` | `1200` | length of one recording chunk (max 3600). Hold fn longer and it keeps recording into the next chunk, pasted after this one, so nothing is cut off |
+| `queue_depth` | `2` | finished dictations that may wait while one is transcribed; a press beyond that is refused |
 | `log_level` | `info` | `debug`, `info`, `warn`, `error` |
 | `log_max_bytes` / `log_keep` | `1048576` / `3` | log rotation |
 
 Restart the service after editing:
-`launchctl kickstart -k gui/$(id -u)/com.murmur`
+`launchctl kickstart -k gui/$(id -u)/com.vox`
 
 ### Other models
 
@@ -86,25 +85,26 @@ about 2 s per short dictation (TESTING.md). Smaller models such as `small` or
 
 | | |
 |---|---|
-| status | `launchctl print gui/$(id -u)/com.murmur \| grep -E 'state\|pid'` |
-| restart | `launchctl kickstart -k gui/$(id -u)/com.murmur` |
-| stop until next login | `launchctl bootout gui/$(id -u)/com.murmur` |
-| start again | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.murmur.plist` |
-| log | `~/Library/Logs/murmur/murmur.log` (JSON lines, rotated at 1 MB, 3 kept) |
+| status | `launchctl print gui/$(id -u)/com.vox \| grep -E 'state\|pid'` |
+| restart | `launchctl kickstart -k gui/$(id -u)/com.vox` |
+| stop until next login | `launchctl bootout gui/$(id -u)/com.vox` |
+| start again | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vox.plist` |
+| log | `~/Library/Logs/vox/vox.log` (JSON lines, rotated at 1 MB, 3 kept) |
+| transcript history | `~/Library/Application Support/vox/history.txt`: every transcript, written before it is pasted, so a failed or misplaced paste can be recovered (rotated at 2 MB, 1 kept) |
 
 The log records each dictation's length, latency and outcome, never the
-words. Run `murmur` in a terminal to see the text as it's heard.
+words. Run `vox` in a terminal to see the text as it's heard.
 
 ## Commands
 
 ```
-murmur                 run the service (what launchd starts)
-murmur transcribe a.wav b.wav   transcribe files through the full pipeline
-murmur bench *.wav     end-of-speech → text latency (real-time playback)
-murmur soak            long-running stability run with memory/CPU/threads sampling
-murmur mic-test        microphone → model check
-murmur check           permissions, model, paths
-murmur config          effective configuration
+vox                 run the service (what launchd starts)
+vox transcribe a.wav b.wav   transcribe files through the full pipeline
+vox bench *.wav     end-of-speech → text latency (real-time playback)
+vox soak            long-running stability run with memory/CPU/threads sampling
+vox mic-test        microphone → model check
+vox check           permissions, model, paths
+vox config          effective configuration
 ```
 
 ## Uninstall
@@ -117,12 +117,12 @@ murmur config          effective configuration
 ## Built for long uptime
 
 Dictation daemons tend to degrade over days in a few predictable ways. Here's
-what murmur does about each:
+what vox does about each:
 
-| Failure mode | What murmur does |
+| Failure mode | What vox does |
 |---|---|
 | Waiting on a network or a stuck request | Transcription is local, and every model call has a deadline (whisper.cpp's abort callback) |
-| One slow dictation holding up the ones behind it | A single worker with fixed-size buffers. A press when all buffers are busy is refused with the error sound instead of queueing without limit |
+| One slow dictation holding up the ones behind it | A single worker with fixed-size buffers. A press when all buffers are busy is refused (and logged) instead of queueing without limit |
 | Going deaf after unplugging a mic, switching AirPods or sleep | Input is rebuilt on device change, disconnect, sleep/wake and failed starts. A device that goes silent is caught by its callback count |
 | A hung audio driver freezing the hotkey | Every CoreAudio call has a timeout and runs off the hotkey path. A hung unit is disarmed at once and released when the call returns |
 | Glitches or pauses on the real-time audio thread | A C callback that only copies into a lock-free ring. No allocation, lock or language runtime on that thread |
@@ -164,7 +164,7 @@ CoreAudio IO thread ─▶ C callback ─▶ lock-free ring (4 s)
 Every queue and buffer is fixed-size:
 - The ring drops samples and counts them if the drain falls 4 s behind.
 - The buffer pool refuses new presses when full.
-- Recordings stop at `max_record_seconds`.
+- A recording is split into chunks of `max_record_seconds`. Each full chunk is transcribed and pasted while you keep talking, so a long dictation is never cut off. It stops at the cap only if every buffer is busy.
 - Log records beyond 2048 pending are dropped and counted.
 
 ## Development
@@ -172,8 +172,6 @@ Every queue and buffer is fixed-size:
 ```bash
 scripts/swift.sh build -c release
 scripts/swift.sh test          # integration tests need ggml-tiny.bin in the models folder
-                               # (if the test build says "plugin for module 'TestingMacros' not found",
-                               #  remove .build/out/*/Debug: stale state from a release build)
 bench/make_corpus.sh           # synthetic speech corpus for bench/soak
 ```
 

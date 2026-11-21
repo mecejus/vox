@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import MurmurCore
+@testable import VoxCore
 
 /// A scriptable model for exercising the pipeline without whisper.
 final class FakeTranscriber: Transcriber, @unchecked Sendable {
@@ -157,15 +157,44 @@ func pipelineLogQuiet() {
         r.shutdown()
     }
 
-    @Test func recordingIsCappedAtMaxDuration() {
+    /// Holding the key past `maxRecordSeconds` rolls into the next buffer:
+    /// every chunk is transcribed and delivered, in order, nothing dropped.
+    @Test func longRecordingRollsOverIntoChunks() {
         let fake = FakeTranscriber()
         var s = Pipeline.Settings()
         s.maxRecordSeconds = 1
+        // Fed at 10x real time, so the drain keeps up the way it does live.
+        let r = OfflineRunner(transcriber: fake, settings: s, speed: 10)
+        pipelineLogQuiet()
+        #expect(r.start(timeout: 5))
+        var transcripts: [String] = []
+        let lock = NSLock()
+        r.pipeline.onTranscript = { t in lock.withLock { transcripts.append(t) } }
+        _ = r.run(speechLike(seconds: 3.5))
+        let deadline = Date().addingTimeInterval(5)
+        while r.output.texts.count < 4, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        #expect(r.output.texts.count == 4)
+        #expect(lock.withLock { transcripts } == r.output.texts)
+        let audio = fake.inputs.dropFirst().map(\.count).reduce(0, +)
+        #expect(audio > Int(2.9 * 16_000))
+        r.shutdown()
+    }
+
+    /// With no free buffer to roll into, the recording ends at the cap and
+    /// what was recorded is still delivered.
+    @Test func recordingIsCappedWhenNoBufferIsFree() {
+        let fake = FakeTranscriber()
+        fake.delay = 1.5
+        var s = Pipeline.Settings()
+        s.maxRecordSeconds = 1
+        s.queueDepth = 0
         let r = makeRunner(fake, s)
         #expect(r.start(timeout: 5))
-        let res = r.run(speechLike(seconds: 3))
-        #expect(res.report.map { abs($0.audioSeconds - 1.0) < 0.01 } == true)
-        #expect(res.text != nil)
+        _ = r.run(speechLike(seconds: 4))
+        let deadline = Date().addingTimeInterval(6)
+        while r.output.texts.count < 2, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        Thread.sleep(forTimeInterval: 0.3)
+        #expect(r.output.texts.count == 2)
         r.shutdown()
     }
 

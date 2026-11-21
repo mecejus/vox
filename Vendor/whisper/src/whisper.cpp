@@ -6990,7 +6990,7 @@ int whisper_full_with_state(
     }
 
     // overwrite audio_ctx before language detection, which encodes with it
-    // (murmur patch, see scripts/vendor_whisper.py)
+    // (vox patch, see scripts/vendor_whisper.py)
     if (params.audio_ctx > whisper_n_audio_ctx(ctx)) {
         WHISPER_LOG_ERROR("%s: audio_ctx is larger than the maximum allowed (%d > %d)\n", __func__, params.audio_ctx, whisper_n_audio_ctx(ctx));
         return -5;
@@ -7224,7 +7224,7 @@ int whisper_full_with_state(
         }
 
         // encode audio features starting at offset seek
-        // (murmur patch: reuse the language-detection encode of window 0)
+        // (vox patch: reuse the language-detection encode of window 0)
         const bool reuse_encode = lang_detect_encoded && seek == 0;
         lang_detect_encoded = false;
         if (!reuse_encode && !whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {

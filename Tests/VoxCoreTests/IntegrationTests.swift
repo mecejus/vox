@@ -1,14 +1,14 @@
 import Foundation
 import Testing
-@testable import MurmurCore
+@testable import VoxCore
 
 /// End-to-end tests with the real whisper.cpp engine. They use the small
-/// `ggml-tiny.bin` model (fast) from the models folder, or MURMUR_TEST_MODEL,
+/// `ggml-tiny.bin` model (fast) from the models folder, or VOX_TEST_MODEL,
 /// and speech generated with macOS `say`, so no microphone is involved.
 /// Skipped when no model is present.
 enum Fixture {
     static let model: URL = {
-        if let p = ProcessInfo.processInfo.environment["MURMUR_TEST_MODEL"] { return URL(fileURLWithPath: p) }
+        if let p = ProcessInfo.processInfo.environment["VOX_TEST_MODEL"] { return URL(fileURLWithPath: p) }
         return Paths.models.appendingPathComponent("ggml-tiny.bin")
     }()
 

@@ -1,5 +1,5 @@
-#ifndef MURMUR_CREALTIME_H
-#define MURMUR_CREALTIME_H
+#ifndef VOX_CREALTIME_H
+#define VOX_CREALTIME_H
 
 // Everything that runs on CoreAudio's real-time IO thread lives behind this
 // header. The rule for that thread: no allocation, no locks, no syscalls that

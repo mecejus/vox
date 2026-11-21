@@ -1,6 +1,6 @@
 import Foundation
 
-/// Minimal RIFF/WAVE reader for the offline paths (`murmur transcribe`, the
+/// Minimal RIFF/WAVE reader for the offline paths (`vox transcribe`, the
 /// integration test, the benchmarks). Accepts PCM 16/24/32-bit integer and
 /// 32-bit float, any rate and channel count, and returns mono float.
 /// Malformed input throws; it never traps.

@@ -62,7 +62,7 @@ public final class FnKeyTap: @unchecked Sendable {
             ready.signal()
             if ok { CFRunLoopRun() }
         }
-        t.name = "murmur.eventtap"
+        t.name = "vox.eventtap"
         t.qualityOfService = .userInteractive
         thread = t
         t.start()

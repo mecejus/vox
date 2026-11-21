@@ -47,7 +47,7 @@ public final class Daemon {
         guard Permissions.hasAccessibility else {
             if Permissions.markAccessPrompted() {
                 Permissions.promptAccessibility()
-                log.warn("accessibility_missing", ["hint": "System Settings > Privacy & Security > Accessibility: switch murmur on. It starts by itself once you do."])
+                log.warn("accessibility_missing", ["hint": "System Settings > Privacy & Security > Accessibility: switch vox on. It starts by itself once you do."])
             }
             Permissions.waitForAccessibilityChange(timeout: Self.accessRetryDelay)
             log.flush()
@@ -57,7 +57,7 @@ public final class Daemon {
 
         if !Permissions.requestMicrophone() {
             // Not fatal: every press reports it until access is granted.
-            log.error("microphone_denied", ["hint": "System Settings > Privacy & Security > Microphone: switch murmur on."])
+            log.error("microphone_denied", ["hint": "System Settings > Privacy & Security > Microphone: switch vox on."])
         }
 
         guard let source = CoreAudioSource() else {
@@ -79,7 +79,9 @@ public final class Daemon {
         settings.queueDepth = config.queueDepth
         let output: TextOutput = isatty(STDOUT_FILENO) != 0 ? EchoOutput(PasteOutput()) : PasteOutput()
         let pipeline = Pipeline(source: source, transcriber: engine, output: output,
-                                chimes: SystemChimes(enabled: config.sounds), settings: settings)
+                                chimes: NoChimes(), settings: settings)
+        let history = TranscriptHistory()
+        pipeline.onTranscript = { history.append($0) }
         pipeline.onUnrecoverable = { [weak self] why in
             DispatchQueue.main.async { self?.stop(.failure, reason: why) }
         }
@@ -108,7 +110,7 @@ public final class Daemon {
         watchSignals()
         startHealthLog()
 
-        print("murmur ready — hold [fn] to dictate. Ctrl-C to quit.")
+        print("vox ready — hold [fn] to dictate. Ctrl-C to quit.")
         fflush(stdout)
         log.info("ready", ProcessStats.current().fields)
 

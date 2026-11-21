@@ -15,17 +15,20 @@ import Foundation
 /// Bounds and drop policy:
 ///   - Recordings live in a fixed pool of `queueDepth + 2` buffers (one being
 ///     recorded, one being transcribed, `queueDepth` waiting). A key press
-///     when none is free is refused with the error chime: the newest
+///     when none is free is refused (an error cue, logged): the newest
 ///     dictation is the one dropped, before the user speaks it, and nothing
 ///     grows without bound.
-///   - A recording longer than `maxRecordSeconds` is ended there.
+///   - A recording that fills its buffer (`maxRecordSeconds`) carries on
+///     into the next free buffer while the key is still held: the full one
+///     is transcribed and pasted as a chunk, and nothing said is dropped.
+///     Only when no buffer is free is the recording ended there.
 ///   - The ring between the audio thread and the drain holds seconds of
 ///     audio; if the drain ever falls that far behind, samples are dropped
 ///     on the audio thread and counted in the log.
 ///   - Every model call has a deadline; a stuck call is aborted.
 public final class Pipeline: @unchecked Sendable {
     public struct Settings {
-        public var maxRecordSeconds: Int = 300
+        public var maxRecordSeconds: Int = 1200
         public var queueDepth: Int = 2
         /// Shorter recordings (or recordings with less speech than this) are
         /// ignored as stray taps.
@@ -63,12 +66,15 @@ public final class Pipeline: @unchecked Sendable {
     private let output: TextOutput
     private let chimes: ChimePlayer
 
-    private let state = DispatchQueue(label: "murmur.state", qos: .userInteractive)
-    private let outputQueue = DispatchQueue(label: "murmur.output", qos: .userInitiated)
+    private let state = DispatchQueue(label: "vox.state", qos: .userInteractive)
+    private let outputQueue = DispatchQueue(label: "vox.output", qos: .userInitiated)
     private let pool: BufferPool
 
     /// Called on an arbitrary thread after each dictation completes.
     public var onReport: ((Report) -> Void)?
+    /// Called on the worker with every transcript, before it is pasted, so
+    /// the text survives a failed or misdirected paste.
+    public var onTranscript: ((String) -> Void)?
     /// Called when the audio source cannot recover in-process.
     public var onUnrecoverable: ((String) -> Void)?
 
@@ -80,6 +86,9 @@ public final class Pipeline: @unchecked Sendable {
         let resampler: Resampler
         var drainTimer: DispatchSourceTimer?
         var capped = false
+        /// Resampled samples that arrived after the buffer filled; they open
+        /// the next chunk when the recording rolls over.
+        var spill: [Float] = []
         init(id: Int, buffer: SampleBuffer, resampler: Resampler) {
             self.id = id
             self.buffer = buffer
@@ -124,7 +133,7 @@ public final class Pipeline: @unchecked Sendable {
     /// Returns immediately; `waitUntilReady` blocks for tests and tools.
     public func start() {
         let t = Thread { [weak self] in self?.workerLoop() }
-        t.name = "murmur.worker"
+        t.name = "vox.worker"
         t.qualityOfService = .userInteractive
         t.stackSize = 8 << 20
         worker = t
@@ -227,12 +236,14 @@ public final class Pipeline: @unchecked Sendable {
 
         let timer = DispatchSource.makeTimerSource(queue: state)
         timer.schedule(deadline: .now() + settings.drainInterval, repeating: settings.drainInterval, leeway: .milliseconds(5))
-        timer.setEventHandler { [weak self, weak s] in
-            guard let self, let s, self.session === s else { return }
+        // The timer follows the recording across rollovers, so it acts on
+        // whichever session is current.
+        timer.setEventHandler { [weak self] in
+            guard let self, let s = self.session else { return }
             self.drain(s)
-            if s.buffer.isFull, !s.capped {
+            if s.buffer.isFull, !s.capped, !self.rollOver(s) {
                 s.capped = true
-                log.warn("recording_capped", ["seconds": self.settings.maxRecordSeconds])
+                log.warn("recording_capped", ["seconds": self.settings.maxRecordSeconds, "reason": "no free buffer"])
                 self.finish(s, released: .now(), reason: "max duration")
             }
         }
@@ -248,7 +259,8 @@ public final class Pipeline: @unchecked Sendable {
                 let n = source.ring.read(into: tmp)
                 if n == 0 { break }
                 s.resampler.process(UnsafeBufferPointer(rebasing: tmp[0..<n])) { out in
-                    s.buffer.append(out)
+                    let kept = s.buffer.append(out)
+                    if kept < out.count { s.spill.append(contentsOf: out[kept...]) }
                 }
                 if s.buffer.isFull { break }
             }
@@ -258,6 +270,25 @@ public final class Pipeline: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// The buffer is full and the key is still held: hand the full buffer to
+    /// the worker as one chunk and keep recording into a fresh one, without
+    /// stopping the microphone or resetting the resampler. Returns false when
+    /// no buffer is free.
+    private func rollOver(_ s: Session) -> Bool {
+        guard session === s, let buffer = pool.take() else { return false }
+        let next = Session(id: nextID, buffer: buffer, resampler: s.resampler)
+        nextID += 1
+        s.spill.withUnsafeBufferPointer { _ = buffer.append($0) }
+        s.spill.removeAll()
+        next.drainTimer = s.drainTimer
+        s.drainTimer = nil
+        session = next
+        log.info("recording_continued", ["id": s.id, "next": next.id,
+                                         "seconds": Double(s.buffer.count) / Double(Speech.rate)])
+        enqueue(Job(id: s.id, buffer: s.buffer, released: .now()))
+        return true
     }
 
     private func finish(_ s: Session, released: DispatchTime, reason: String) {
@@ -420,6 +451,7 @@ public final class Pipeline: @unchecked Sendable {
             finishReport(report)
             return
         }
+        onTranscript?(text)
 
         outputQueue.async {
             do {
@@ -459,7 +491,7 @@ public final class Pipeline: @unchecked Sendable {
 
     /// Feeds a whole recording through the pipeline as if the key were held
     /// for its duration: press, play the file into the ring, release at the
-    /// end. Used by the integration test, `murmur transcribe` and the
+    /// end. Used by the integration test, `vox transcribe` and the
     /// benchmarks. The source must be the FileSource this pipeline was built
     /// with.
     /// Returns false if the press was refused (no recording happened).

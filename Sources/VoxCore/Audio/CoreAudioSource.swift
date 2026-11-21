@@ -19,8 +19,8 @@ public final class CoreAudioSource: AudioSource, @unchecked Sendable {
     public let ring: SampleRing
     public var onEvent: ((AudioSourceEvent) -> Void)?
 
-    private let control = DispatchQueue(label: "murmur.audio.control", qos: .userInteractive)
-    private let events = DispatchQueue(label: "murmur.audio.events", qos: .userInitiated)
+    private let control = DispatchQueue(label: "vox.audio.control", qos: .userInteractive)
+    private let events = DispatchQueue(label: "vox.audio.events", qos: .userInitiated)
     // Touched only on `control`.
     private var capture: OpaquePointer?
     private var running = false

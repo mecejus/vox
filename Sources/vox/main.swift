@@ -1,11 +1,11 @@
 import Foundation
-import MurmurCore
+import VoxCore
 
-// murmur: hold fn, speak, release; the words are pasted where the cursor is.
+// vox: hold fn, speak, release; the words are pasted where the cursor is.
 // Everything runs on this Mac (whisper.cpp); nothing is sent anywhere.
 
 let usage = """
-usage: murmur [command] [options]
+usage: vox [command] [options]
 
 commands:
   run                    run the dictation service (the default)
@@ -18,7 +18,7 @@ commands:
   version                print the version
 
 options:
-  --config PATH          config file (default ~/.config/murmur/config.json)
+  --config PATH          config file (default ~/.config/vox/config.json)
   --model PATH           override the model
   --language CODE        override the language ("auto" or e.g. "en")
 """
@@ -59,7 +59,7 @@ struct Args {
 }
 
 func die(_ msg: String, code: Int32 = 2) -> Never {
-    FileHandle.standardError.write(Data("murmur: \(msg)\n".utf8))
+    FileHandle.standardError.write(Data("vox: \(msg)\n".utf8))
     exit(code)
 }
 
@@ -69,7 +69,7 @@ if args.flags.contains("help") || args.command == "help" {
     exit(0)
 }
 if args.command == "version" {
-    print("murmur \(Version.string)")
+    print("vox \(Version.string)")
     exit(0)
 }
 
@@ -144,9 +144,9 @@ case "run":
     // One service per user. Run by hand while the service is up, refuse;
     // started by launchd while a hand-run copy holds the lock, wait for it.
     try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-    let lockFD = open(Paths.support.appendingPathComponent("murmur.lock").path, O_CREAT | O_RDWR, 0o600)
+    let lockFD = open(Paths.support.appendingPathComponent("vox.lock").path, O_CREAT | O_RDWR, 0o600)
     if lockFD >= 0, flock(lockFD, LOCK_EX | (args.flags.contains("wait-for-lock") ? 0 : LOCK_NB)) != 0 {
-        die("another murmur is already running (launchctl list | grep murmur)", code: 0)
+        die("another vox is already running (launchctl list | grep vox)", code: 0)
     }
     exit(Daemon(config: config).run())
 
@@ -239,7 +239,7 @@ case "mic-test":
     var settings = Pipeline.Settings()
     settings.maxRecordSeconds = Int(seconds) + 2
     let p = Pipeline(source: mic, transcriber: WhisperEngine(engineOptions()), output: out,
-                     chimes: SystemChimes(enabled: config.sounds), settings: settings)
+                     chimes: NoChimes(), settings: settings)
     let done = DispatchSemaphore(value: 0)
     var report: Pipeline.Report?
     p.onReport = { report = $0; done.signal() }
@@ -258,7 +258,7 @@ case "mic-test":
     p.shutdown()
 
 case "check":
-    print("murmur \(Version.string)")
+    print("vox \(Version.string)")
     print("config        \(configURL.path)")
     print("model         \(config.modelURL.path) \(FileManager.default.fileExists(atPath: config.modelURL.path) ? "(present)" : "(MISSING)")")
     print("language      \(config.language)")

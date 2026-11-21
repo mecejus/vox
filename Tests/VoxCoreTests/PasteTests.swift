@@ -1,13 +1,13 @@
 import AppKit
 import Foundation
 import Testing
-@testable import MurmurCore
+@testable import VoxCore
 
 /// PasteOutput against a private pasteboard, with the Cmd+V keystroke
 /// replaced by a simulated app that reads the pasteboard when it gets to it.
 @Suite(.serialized) struct PasteTests {
     func board(holding old: String) -> NSPasteboard {
-        let pb = NSPasteboard(name: NSPasteboard.Name("murmur-test-\(UUID().uuidString)"))
+        let pb = NSPasteboard(name: NSPasteboard.Name("vox-test-\(UUID().uuidString)"))
         pb.clearContents()
         pb.setString(old, forType: .string)
         return pb

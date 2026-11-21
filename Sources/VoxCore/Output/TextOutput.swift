@@ -152,7 +152,7 @@ public final class PasteOutput: TextOutput {
     }
 }
 
-/// Collects output in memory; for tests and `murmur bench`.
+/// Collects output in memory; for tests and `vox bench`.
 public final class RecordingOutput: TextOutput, @unchecked Sendable {
     private let lock = NSLockLite()
     private var items: [String] = []

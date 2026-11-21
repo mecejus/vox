@@ -1,7 +1,7 @@
 # Testing
 
 All numbers below were measured on 2026-10-25. The machine was a MacBook
-with an Apple M1 and 8 GB of RAM, running macOS 26.6.2. murmur used
+with an Apple M1 and 8 GB of RAM, running macOS 26.6.2. vox used
 `ggml-large-v3-turbo-q5_0.bin` on Metal with language `auto`. Raw outputs land in `bench/out/` (not committed).
 
 ## Test suite
@@ -43,17 +43,17 @@ trim, whisper.cpp and the ordered output. It asserts WER < 0.25 and latency
 |---|---|---|
 | Device loss mid-recording | `deviceLossMidRecordingKeepsWhatWasSaidAndRecovers` (fake model), `deviceLossWithRealModel` | The audio up to the loss is transcribed. The next dictation works normally. No crash. |
 | Corrupt audio chunk (NaN, ±Inf, 1e9) | `corruptChunkIsRepairedBeforeTheModel`, `corruptChunkWithRealModel` | Samples repaired before the model. The model never sees a non-finite value, and the sentence still comes through (WER < 0.4). |
-| Model error | `repeatedModelErrorsTriggerReloadAndRecovery`, `modelErrorsRecoverWithRealModel` | Each failure gets the error sound and a log line. After 2 in a row the model is reloaded, and the next dictation succeeds. |
+| Model error | `repeatedModelErrorsTriggerReloadAndRecovery`, `modelErrorsRecoverWithRealModel` | Each failure gets an error cue and a log line. After 2 in a row the model is reloaded, and the next dictation succeeds. |
 | Inference hang | `modelTimeoutIsAFailureNotAHang`, `inferenceDeadlineAbortsAndEngineSurvives` | A real whisper.cpp call is aborted via its abort callback when the deadline passes. The same engine transcribes correctly afterwards. |
-| Missing / corrupt model file | `missingModelIsRetriedWithoutCrashing`, `missingModelFileIsAnErrorNotACrash`, `corruptModelFileIsAnErrorNotACrash` | An error, not a crash. Presses are refused with the error sound until the model loads, and loading is retried. |
-| Audio start failure | `failedStartIsReportedAndTheNextPressWorks` | Error sound. The next press works. |
+| Missing / corrupt model file | `missingModelIsRetriedWithoutCrashing`, `missingModelFileIsAnErrorNotACrash`, `corruptModelFileIsAnErrorNotACrash` | An error, not a crash. Presses are refused (logged) until the model loads, and loading is retried. |
+| Audio start failure | `failedStartIsReportedAndTheNextPressWorks` | Logged as an error. The next press works. |
 | Output (paste) failure | `outputFailureDoesNotStopLaterDictations` | Logged. Later dictations are unaffected. |
-| Backlog | `backlogRefusesNewPressInsteadOfGrowing` | With every buffer busy, a press is refused (error sound). Capacity returns once the backlog drains. |
-| Over-long recording | `recordingIsCappedAtMaxDuration` | Ends at `max_record_seconds` and is transcribed. |
+| Backlog | `backlogRefusesNewPressInsteadOfGrowing` | With every buffer busy, a press is refused (logged). Capacity returns once the backlog drains. |
+| Over-long recording | `longRecordingRollsOverIntoChunks`, `recordingIsCappedWhenNoBufferIsFree` | Rolls into the next buffer at `max_record_seconds`, so every chunk is transcribed and pasted in order with nothing dropped. It ends at the cap only if no buffer is free. |
 
 ## Latency: end of speech → text output
 
-`murmur bench --runs 3 bench/audio/*.wav`. Each clip is played
+`vox bench --runs 3 bench/audio/*.wav`. Each clip is played
 into the pipeline in real time, as a person speaking. The clock starts at
 key release (end of the clip) and stops when the text is handed to the
 output, which is the moment Cmd+V would be posted.
@@ -107,7 +107,7 @@ boundary error.
 ## Soak test: 1 hour
 
 ```bash
-murmur soak --minutes 60 --speed 1 --corpus bench/audio --csv bench/out/soak.csv
+vox soak --minutes 60 --speed 1 --corpus bench/audio --csv bench/out/soak.csv
 ```
 
 The 11-clip corpus was looped through the real pipeline at real-time
@@ -134,9 +134,9 @@ startup and reused for every dictation.
 ## Not covered by these tests
 
 - **Real microphone, real fn key and real paste.** Not exercised in this
-  run: they need murmur installed and granted Accessibility and Microphone
+  run: they need vox installed and granted Accessibility and Microphone
   access. The code paths below the hardware (ring, drain, resampler, model,
-  output ordering) are the ones tested above. `murmur mic-test` checks the
+  output ordering) are the ones tested above. `vox mic-test` checks the
   real microphone path in one command.
 - **Physical device unplug, sleep/wake and revoked permissions.** Device
   loss is simulated at the source boundary (the same event the CoreAudio

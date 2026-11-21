@@ -1,17 +1,17 @@
 #!/bin/sh
-# Builds murmur from this checkout, installs it as a per-user launchd
+# Builds vox from this checkout, installs it as a per-user launchd
 # service, and downloads the default model if it is not there yet.
 # Run it again to update. No sudo needed.
 set -e
 cd "$(dirname "$0")"
 
-LABEL="com.murmur"
+LABEL="com.vox"
 BIN_DIR="$HOME/.local/bin"
-BIN="$BIN_DIR/murmur"
+BIN="$BIN_DIR/vox"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-CONFIG_DIR="$HOME/.config/murmur"
-LOG_DIR="$HOME/Library/Logs/murmur"
-MODEL_DIR="$HOME/Library/Application Support/murmur/models"
+CONFIG_DIR="$HOME/.config/vox"
+LOG_DIR="$HOME/Library/Logs/vox"
+MODEL_DIR="$HOME/Library/Application Support/vox/models"
 MODEL="ggml-large-v3-turbo-q5_0.bin"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL"
 MODEL_SHA1="e050f7970618a659205450ad97eb95a18d69c9ee"
@@ -21,13 +21,13 @@ MODEL_SHA1="e050f7970618a659205450ad97eb95a18d69c9ee"
 # grant removed and re-added by hand. Signing with a certificate binds it to
 # the certificate instead. The certificate is created once, on this Mac, in
 # its own keychain.
-SIGN_IDENTITY="murmur-local"
-SIGN_IDENTIFIER="com.murmur"
-KEYCHAIN="$HOME/Library/Keychains/murmur-signing.keychain-db"
+SIGN_IDENTITY="vox-local"
+SIGN_IDENTIFIER="com.vox"
+KEYCHAIN="$HOME/Library/Keychains/vox-signing.keychain-db"
 KEYCHAIN_PW_FILE="$CONFIG_DIR/signing-keychain-password"
 
-[ "$(uname)" = "Darwin" ] || { echo "murmur needs macOS" >&2; exit 1; }
-[ "$(uname -m)" = "arm64" ] || { echo "murmur needs Apple Silicon (M1 or later)" >&2; exit 1; }
+[ "$(uname)" = "Darwin" ] || { echo "vox needs macOS" >&2; exit 1; }
+[ "$(uname -m)" = "arm64" ] || { echo "vox needs Apple Silicon (M1 or later)" >&2; exit 1; }
 xcrun --find swift >/dev/null 2>&1 || {
   echo "Swift is missing. Install the Command Line Tools first: xcode-select --install" >&2
   exit 1
@@ -59,16 +59,16 @@ CNF
     -keyout "$work/key.pem" -out "$work/cert.pem" 2>/dev/null
   /usr/bin/openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" \
     -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
-    -out "$work/identity.p12" -passout pass:murmur -name "$SIGN_IDENTITY"
+    -out "$work/identity.p12" -passout pass:vox -name "$SIGN_IDENTITY"
   pw=$(/usr/bin/openssl rand -hex 24)
   mkdir -p "$CONFIG_DIR"
   (umask 077 && printf '%s' "$pw" > "$KEYCHAIN_PW_FILE")
   [ -f "$KEYCHAIN" ] && security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
   security create-keychain -p "$pw" "$KEYCHAIN"
   security set-keychain-settings "$KEYCHAIN"
-  security import "$work/identity.p12" -k "$KEYCHAIN" -P murmur -T /usr/bin/codesign >/dev/null
+  security import "$work/identity.p12" -k "$KEYCHAIN" -P vox -T /usr/bin/codesign >/dev/null
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$KEYCHAIN" >/dev/null
-  if ! security list-keychains -d user | grep -q "murmur-signing"; then
+  if ! security list-keychains -d user | grep -q "vox-signing"; then
     # shellcheck disable=SC2046
     security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '" ')
   fi
@@ -81,9 +81,9 @@ sign_binary() {
   codesign --force --sign "$SIGN_IDENTITY" --identifier "$SIGN_IDENTIFIER" --keychain "$KEYCHAIN" "$1"
 }
 
-echo "Building murmur (release)..."
+echo "Building vox (release)..."
 scripts/swift.sh build -c release 2>&1 | grep -E "error|warning: unhandled|Compiling|Build complete" | tail -3
-BUILT=".build/release/murmur"
+BUILT=".build/release/vox"
 [ -x "$BUILT" ] || { echo "Build failed." >&2; exit 1; }
 
 if [ ! -f "$MODEL_DIR/$MODEL" ]; then
@@ -109,15 +109,15 @@ fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-cp "$BUILT" "$TMP/murmur"
+cp "$BUILT" "$TMP/vox"
 printf 'Signing...'
-sign_binary "$TMP/murmur" 2>/dev/null
+sign_binary "$TMP/vox" 2>/dev/null
 printf ' done\n'
 mkdir -p "$BIN_DIR" "$LOG_DIR" "$CONFIG_DIR" "$(dirname "$PLIST")"
-install -m 755 "$TMP/murmur" "$BIN"
+install -m 755 "$TMP/vox" "$BIN"
 echo "Installed $BIN"
 
-# KeepAlive restarts murmur whenever it exits: after a crash, after an
+# KeepAlive restarts vox whenever it exits: after a crash, after an
 # unrecoverable audio hang (exit 1), and on purpose while it waits for the
 # Accessibility grant (exit 0; see Permissions.swift). ThrottleInterval 1 so
 # a new grant is noticed within seconds. ProcessType Interactive keeps the
@@ -162,7 +162,7 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo ""
 if [ "$REGRANT" = 1 ] || ! "$BIN" check 2>/dev/null | grep -q "accessibility granted"; then
   echo "macOS will ask for Accessibility access (for the fn key and pasting)."
-  echo "Click \"Open System Settings\" and switch murmur on. If murmur is already"
+  echo "Click \"Open System Settings\" and switch vox on. If vox is already"
   echo "listed from an older build, remove it with the minus (-) button first."
   echo "It will also ask for the microphone the first time; click Allow."
   echo ""
@@ -170,14 +170,14 @@ fi
 
 ticks=0
 while [ "$ticks" -lt 1200 ]; do
-  if tail -n +"$((LOG_START + 1))" "$LOG_DIR/launchd.log" 2>/dev/null | grep -q "murmur ready"; then
+  if tail -n +"$((LOG_START + 1))" "$LOG_DIR/launchd.log" 2>/dev/null | grep -q "vox ready"; then
     echo "All set. Hold fn, talk, let go."
     exit 0
   fi
-  printf '\rWaiting for murmur to start... %ss ' "$((ticks / 4))"
+  printf '\rWaiting for vox to start... %ss ' "$((ticks / 4))"
   sleep 0.25
   ticks=$((ticks + 1))
 done
 printf '\r'
-echo "Still waiting; murmur starts by itself once Accessibility is switched on."
-echo "Logs: $LOG_DIR/murmur.log"
+echo "Still waiting; vox starts by itself once Accessibility is switched on."
+echo "Logs: $LOG_DIR/vox.log"

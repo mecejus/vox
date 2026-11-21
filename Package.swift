@@ -37,10 +37,10 @@ let ggmlCXX: [CXXSetting] =
     [.unsafeFlags(ggmlFlags)]
 
 let package = Package(
-    name: "murmur",
+    name: "vox",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "murmur", targets: ["murmur"]),
+        .executable(name: "vox", targets: ["vox"]),
     ],
     targets: [
         .target(
@@ -70,9 +70,9 @@ let package = Package(
             ]
         ),
         .target(
-            name: "MurmurCore",
+            name: "VoxCore",
             dependencies: ["CWhisper", "CRealtime"],
-            path: "Sources/MurmurCore",
+            path: "Sources/VoxCore",
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("AppKit"),
@@ -81,9 +81,9 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "murmur",
-            dependencies: ["MurmurCore"],
-            path: "Sources/murmur",
+            name: "vox",
+            dependencies: ["VoxCore"],
+            path: "Sources/vox",
             linkerSettings: [
                 // An embedded Info.plist gives the bare binary an identity
                 // for the microphone and Accessibility permission prompts.
@@ -92,9 +92,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "MurmurCoreTests",
-            dependencies: ["MurmurCore"],
-            path: "Tests/MurmurCoreTests"
+            name: "VoxCoreTests",
+            dependencies: ["VoxCore"],
+            path: "Tests/VoxCoreTests"
         ),
     ],
     swiftLanguageModes: [.v5],

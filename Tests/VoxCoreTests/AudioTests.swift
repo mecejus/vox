@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import MurmurCore
+@testable import VoxCore
 
 @Suite struct RingTests {
     @Test func writeReadWrapsAround() {

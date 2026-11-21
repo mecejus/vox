@@ -1,11 +1,25 @@
 import Foundation
 import Testing
-@testable import MurmurCore
+@testable import VoxCore
 
 func tempDir() -> URL {
-    let u = FileManager.default.temporaryDirectory.appendingPathComponent("murmur-tests-\(UUID().uuidString)")
+    let u = FileManager.default.temporaryDirectory.appendingPathComponent("vox-tests-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
     return u
+}
+
+@Suite struct HistoryTests {
+    @Test func appendsAndRotates() throws {
+        let url = tempDir().appendingPathComponent("h/history.txt")
+        let h = TranscriptHistory(url: url, maxBytes: 64)
+        h.append("first line\nwith a break")
+        let one = try String(contentsOf: url, encoding: .utf8)
+        #expect(one.hasSuffix("\tfirst line with a break\n"))
+        h.append(String(repeating: "x", count: 80))
+        h.append("after rotation")
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("after rotation"))
+        #expect(try String(contentsOf: h.previous, encoding: .utf8).contains("xxxx"))
+    }
 }
 
 @Suite struct ConfigTests {
@@ -14,7 +28,7 @@ func tempDir() -> URL {
         #expect(c.language == "lt")
         #expect(c.model == Config.defaultModelFile)
         #expect(c.queueDepth == 2)
-        #expect(c.maxRecordSeconds == 300)
+        #expect(c.maxRecordSeconds == 1200)
         #expect(c.fastDecode == false)
     }
 
@@ -34,7 +48,7 @@ func tempDir() -> URL {
 
     @Test func firstRunWritesDefaultsThenReadsThem() throws {
         let dir = tempDir()
-        let target = dir.appendingPathComponent("murmur/config.json")
+        let target = dir.appendingPathComponent("vox/config.json")
         guard case .created(let cfg) = try ConfigStore.load(from: target) else {
             Issue.record("expected a new config")
             return
@@ -58,7 +72,7 @@ func tempDir() -> URL {
     @Test func relativeModelResolvesIntoModelsFolder() {
         var c = Config()
         c.model = "ggml-tiny.bin"
-        #expect(c.modelURL.path.hasSuffix("Library/Application Support/murmur/models/ggml-tiny.bin"))
+        #expect(c.modelURL.path.hasSuffix("Library/Application Support/vox/models/ggml-tiny.bin"))
         c.model = "/tmp/x.bin"
         #expect(c.modelURL.path == "/tmp/x.bin")
     }

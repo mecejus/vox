@@ -10,7 +10,7 @@ _private="$_pm/ManifestAPI/PackageDescription.swiftmodule/arm64-apple-macos.priv
 _dylib="$_pm/ManifestAPI/libPackageDescription.dylib"
 
 if [ -z "$SWIFTPM_CUSTOM_LIBS_DIR" ] && [ -f "$_private" ] && [ "$_dylib" -nt "$_private" ]; then
-  _clean="$HOME/Library/Caches/murmur/swiftpm-libs"
+  _clean="$HOME/Library/Caches/vox/swiftpm-libs"
   if [ ! -f "$_clean/ManifestAPI/libPackageDescription.dylib" ] || [ "$_dylib" -nt "$_clean/ManifestAPI/libPackageDescription.dylib" ]; then
     rm -rf "$_clean"
     mkdir -p "$_clean/ManifestAPI/PackageDescription.swiftmodule"

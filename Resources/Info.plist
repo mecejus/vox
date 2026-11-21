@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.murmur</string>
+    <string>com.vox</string>
     <key>CFBundleName</key>
-    <string>murmur</string>
+    <string>vox</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>murmur listens while you hold the fn key and turns your speech into text on this Mac.</string>
+    <string>vox listens while you hold the fn key and turns your speech into text on this Mac.</string>
 </dict>
 </plist>

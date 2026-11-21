@@ -6,7 +6,7 @@ import Foundation
 /// caller's thread and written on a private serial queue, so logging never
 /// blocks dictation on disk I/O. Two things keep it bounded:
 ///   - the file rotates at `maxBytes`, keeping `keep` old files
-///     (murmur.log, murmur.log.1 ... murmur.log.<keep>);
+///     (vox.log, vox.log.1 ... vox.log.<keep>);
 ///   - at most `maxPending` records may wait for the writer. Past that, new
 ///     records are counted and dropped, and the count is logged once the
 ///     writer catches up.
@@ -40,7 +40,7 @@ public final class Log: @unchecked Sendable {
 
     public static let shared = Log()
 
-    private let queue = DispatchQueue(label: "murmur.log", qos: .utility)
+    private let queue = DispatchQueue(label: "vox.log", qos: .utility)
     private let lock = NSLock()
     private var pending = 0
     private var droppedRecords = 0
